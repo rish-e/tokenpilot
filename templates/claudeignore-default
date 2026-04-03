@@ -1,0 +1,46 @@
+# Build artifacts
+node_modules/
+.next/
+dist/
+build/
+out/
+.output/
+
+# Caches
+.turbo/
+.cache/
+.parcel-cache/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Test output
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binaries & media
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.ico
+*.mp4
+*.mov
+*.zip
+*.tar.gz
