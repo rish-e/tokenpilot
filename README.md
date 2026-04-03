@@ -129,7 +129,13 @@ pip3 install -r ~/MCPs/tokenpilot/requirements.txt
 }
 ```
 
-4. Restart Claude Code.
+4. Install the `/tp` slash command:
+
+```bash
+cp ~/MCPs/tokenpilot/commands/tp.md ~/.claude/commands/tp.md
+```
+
+5. Restart Claude Code.
 
 ### Optional: RTK for Shell Compression
 
@@ -155,9 +161,27 @@ TokenPilot runs automatically after installation. You'll see `[TokenPilot]` mess
 - On trivial tasks: suggests switching to low effort / Haiku
 - On redundant file reads: warns the file is already in context
 
+### Slash Commands
+
+Install the slash command for quick control:
+
+```bash
+cp ~/MCPs/tokenpilot/commands/tp.md ~/.claude/commands/tp.md
+```
+
+Then use in Claude Code:
+
+| Command | What it does |
+|---------|-------------|
+| `/tp level 7` | Set aggressiveness to 7/10 |
+| `/tp stats` | Show session metrics (prompts, files read, tokens) |
+| `/tp savings` | Show tokens saved this session |
+| `/tp status` | Show current config and classification breakdown |
+| `/tp help` | List all commands |
+
 ### MCP Tools
 
-Ask Claude to use these tools:
+You can also ask Claude directly to use these tools:
 
 - **`set_level(5)`** — raise aggressiveness to 5/10
 - **`get_stats()`** — see session metrics (prompts classified, files read, tokens estimated)
@@ -191,6 +215,8 @@ tokenpilot/
 ├── tracker.py         # In-memory session tracker (used by MCP server process)
 ├── db.py              # SQLite persistence (used by hook subprocesses)
 ├── requirements.txt
+├── commands/
+│   └── tp.md              # /tp slash command (copy to ~/.claude/commands/)
 ├── hooks/
 │   ├── session_start.sh    # SessionStart hook
 │   ├── classify.sh         # UserPromptSubmit hook
