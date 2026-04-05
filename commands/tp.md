@@ -4,30 +4,50 @@ Parse the argument: `$ARGUMENTS`
 
 ## Commands
 
-- **`level <1-10>`** — Set aggressiveness level. Default is 4.
-  - 1-2: Minimal (notify only, no caps)
-  - 3-4: Conservative (suggest effort on trivial tasks, warn on redundant reads)
-  - 5-6: Balanced (suggest on all tasks, 20K thinking cap)
-  - 7-8: Aggressive (block redundant reads, 12K thinking cap)
-  - 9-10: Maximum (enforce effort levels, 8K thinking cap)
+- **`level <1-10>`** — Set aggressiveness level.
   - Call the `set_level` MCP tool from the `tokenpilot` server with the given number.
+  - Display the result as a clean summary.
 
 - **`stats`** — Show session token usage statistics.
   - Call the `get_stats` MCP tool from the `tokenpilot` server.
-  - Display the results in a clean table format.
+  - Format as a clean table with: session time, level, prompts by category, files read, tool calls, tokens tracked, tokens saved.
 
-- **`savings`** — Show token savings report for this session.
+- **`savings`** — Show token savings report.
   - Call the `get_savings` MCP tool from the `tokenpilot` server.
-  - Display the results concisely.
 
-- **`status`** — Show current TokenPilot configuration (level, what's enabled).
-  - Call `get_stats` and format just the level and classification breakdown.
+- **`context`** — Show context window health.
+  - Call the `get_context_health` MCP tool from the `tokenpilot` server.
+  - Show usage %, recommendation, and whether /compact is needed.
+
+- **`tools`** — Show which tools cost the most tokens.
+  - Call the `get_tool_report` MCP tool from the `tokenpilot` server.
+  - Format as a ranked table: tool name, calls, total tokens, avg tokens.
+
+- **`explain <prompt>`** — Debug the classifier on a specific prompt.
+  - Call the `explain_classification` MCP tool from the `tokenpilot` server with the prompt text after "explain".
+  - Show: category, confidence, matched patterns, negated patterns, adjacency score.
+
+- **`file <path>`** — Show read history for a specific file.
+  - Call the `get_file_report` MCP tool from the `tokenpilot` server with the file path.
+
+- **`reset`** — Clear file dedup tracking without resetting the session.
+  - Call the `reset_file_tracking` MCP tool from the `tokenpilot` server.
+
+- **`status`** — Quick overview of current config.
+  - Call `get_stats` and format just: level, session time, total prompts, total tracked tokens.
 
 - No argument or **`help`** — Show available commands:
-  - `/tp level <1-10>` — Set aggressiveness
-  - `/tp stats` — Session metrics
-  - `/tp savings` — Token savings report
-  - `/tp status` — Current config
+  ```
+  /tp level <1-10>     Set aggressiveness
+  /tp stats            Session metrics
+  /tp savings          Token savings report
+  /tp context          Context window health
+  /tp tools            Most expensive tools
+  /tp explain <prompt> Debug classifier
+  /tp file <path>      File read history
+  /tp reset            Clear file dedup cache
+  /tp status           Quick overview
+  ```
 
 ## Rules
 

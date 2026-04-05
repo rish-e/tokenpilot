@@ -1,22 +1,33 @@
 """SQLite persistence for TokenPilot session state.
 
-Stores file read records and session config so state persists
-across separate Python process invocations (hooks run as subprocesses).
+Stores file read records, tool usage, and session config.
+State persists across hook subprocess calls via SQLite with WAL mode.
 """
 
-import json
 import os
 import sqlite3
 import time
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "tokenpilot.db")
+DB_PATH = os.environ.get(
+    "TOKENPILOT_DB",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "tokenpilot.db"),
+)
 
 TOKENS_PER_LINE = 15
+CHARS_PER_TOKEN = 4
 
 
 def _connect():
-    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+    except sqlite3.DatabaseError:
+        # Corrupt DB — delete and recreate
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=3000")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS session (
             key TEXT PRIMARY KEY,
@@ -35,6 +46,21 @@ def _connect():
         )
     """)
     conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_file_reads_path ON file_reads(path)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tool_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_name TEXT NOT NULL,
+            output_chars INTEGER DEFAULT 0,
+            estimated_tokens INTEGER DEFAULT 0,
+            timestamp REAL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tool_usage_name ON tool_usage(tool_name)
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS stats (
             key TEXT PRIMARY KEY,
             value INTEGER DEFAULT 0
@@ -46,19 +72,15 @@ def _connect():
 
 def init_session(level: int = 4):
     conn = _connect()
-    # Clear previous session data
     conn.execute("DELETE FROM file_reads")
+    conn.execute("DELETE FROM tool_usage")
     conn.execute("DELETE FROM session")
     conn.execute("DELETE FROM stats")
     conn.execute("INSERT OR REPLACE INTO session VALUES ('level', ?)", (str(level),))
     conn.execute("INSERT OR REPLACE INTO session VALUES ('start_time', ?)", (str(time.time()),))
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('total_prompts', 0)")
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('trivial', 0)")
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('research', 0)")
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('standard', 0)")
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('complex', 0)")
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('redundant_blocked', 0)")
-    conn.execute("INSERT OR REPLACE INTO stats VALUES ('tokens_saved', 0)")
+    for key in ("total_prompts", "trivial", "research", "standard", "complex",
+                "redundant_blocked", "tokens_saved"):
+        conn.execute("INSERT OR REPLACE INTO stats VALUES (?, 0)", (key,))
     conn.commit()
     conn.close()
 
@@ -90,44 +112,56 @@ def record_read(path: str, offset: int = 0, limit: int = 0, line_count: int = 0)
 
 
 def check_file(path: str, offset: int = 0, limit: int = 0) -> dict:
+    """Check if file was already read. Uses BEGIN IMMEDIATE for serializable isolation."""
     conn = _connect()
-    rows = conn.execute(
-        "SELECT offset_val, limit_val, estimated_tokens FROM file_reads WHERE path = ?",
-        (path,),
-    ).fetchall()
-    conn.close()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = conn.execute(
+            "SELECT offset_val, limit_val, estimated_tokens FROM file_reads WHERE path = ?",
+            (path,),
+        ).fetchall()
 
-    if not rows:
+        if not rows:
+            conn.commit()
+            conn.close()
+            return {"action": "allow", "message": "", "already_read": False, "previous_ranges": []}
+
+        prev_ranges = [(r[0], r[1]) for r in rows]
+
+        for r in rows:
+            if r[0] == offset and r[1] == limit:
+                conn.commit()
+                conn.close()
+                return {
+                    "action": "warn",
+                    "message": "File already read in full. Content is in context.",
+                    "already_read": True,
+                    "previous_ranges": prev_ranges,
+                }
+
+        for r in rows:
+            if r[0] == 0 and r[1] == 0:
+                conn.commit()
+                conn.close()
+                return {
+                    "action": "warn",
+                    "message": "Entire file already in context. Reference specific lines instead of re-reading.",
+                    "already_read": True,
+                    "previous_ranges": prev_ranges,
+                }
+
+        conn.commit()
+        conn.close()
+        return {
+            "action": "allow",
+            "message": f"Partial reads exist: {prev_ranges}",
+            "already_read": False,
+            "previous_ranges": prev_ranges,
+        }
+    except Exception:
+        conn.rollback()
+        conn.close()
         return {"action": "allow", "message": "", "already_read": False, "previous_ranges": []}
-
-    prev_ranges = [(r[0], r[1]) for r in rows]
-
-    # Exact same range already read
-    for r in rows:
-        if r[0] == offset and r[1] == limit:
-            return {
-                "action": "warn",
-                "message": f"File already read in full. Content is in context.",
-                "already_read": True,
-                "previous_ranges": prev_ranges,
-            }
-
-    # Full read covers any requested range
-    for r in rows:
-        if r[0] == 0 and r[1] == 0:
-            return {
-                "action": "warn",
-                "message": "Entire file already in context. Reference specific lines instead of re-reading.",
-                "already_read": True,
-                "previous_ranges": prev_ranges,
-            }
-
-    return {
-        "action": "allow",
-        "message": f"Partial reads exist: {prev_ranges}",
-        "already_read": False,
-        "previous_ranges": prev_ranges,
-    }
 
 
 def record_blocked(estimated_tokens: int = 500):
@@ -141,10 +175,93 @@ def record_blocked(estimated_tokens: int = 500):
 def record_classification(category: str):
     conn = _connect()
     conn.execute("UPDATE stats SET value = value + 1 WHERE key = 'total_prompts'")
-    conn.execute("UPDATE stats SET value = value + 1 WHERE key = ?", (category,))
+    if category in ("trivial", "research", "standard", "complex"):
+        conn.execute("UPDATE stats SET value = value + 1 WHERE key = ?", (category,))
     conn.commit()
     conn.close()
 
+
+# --- Tool usage tracking (Phase 2) ---
+
+def record_tool_use(tool_name: str, output_chars: int = 0):
+    estimated = max(1, output_chars // CHARS_PER_TOKEN)
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO tool_usage (tool_name, output_chars, estimated_tokens, timestamp) "
+        "VALUES (?, ?, ?, ?)",
+        (tool_name, output_chars, estimated, time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_tool_usage_report() -> dict:
+    conn = _connect()
+    rows = conn.execute("""
+        SELECT tool_name,
+               COUNT(*) as calls,
+               SUM(estimated_tokens) as total_tokens,
+               AVG(estimated_tokens) as avg_tokens
+        FROM tool_usage
+        GROUP BY tool_name
+        ORDER BY total_tokens DESC
+    """).fetchall()
+    total = conn.execute("SELECT COALESCE(SUM(estimated_tokens), 0) FROM tool_usage").fetchone()[0]
+    conn.close()
+
+    tools = []
+    for r in rows:
+        tools.append({
+            "tool": r[0],
+            "calls": r[1],
+            "total_tokens": r[2],
+            "avg_tokens": round(r[3]),
+        })
+
+    return {
+        "total_tool_tokens": total,
+        "tool_count": len(tools),
+        "tools": tools[:10],  # Top 10 most expensive
+    }
+
+
+# --- Context health tracking (Phase 4) ---
+
+def get_estimated_context_usage() -> int:
+    """Sum of all tracked token estimates (file reads + tool outputs)."""
+    conn = _connect()
+    file_tokens = conn.execute("SELECT COALESCE(SUM(estimated_tokens), 0) FROM file_reads").fetchone()[0]
+    tool_tokens = conn.execute("SELECT COALESCE(SUM(estimated_tokens), 0) FROM tool_usage").fetchone()[0]
+    conn.close()
+    return file_tokens + tool_tokens
+
+
+def get_context_health(context_limit: int = 200000) -> dict:
+    used = get_estimated_context_usage()
+    pct = min(100, round(used / context_limit * 100, 1))
+    level = get_level()
+
+    from config import get_level_config
+    cfg = get_level_config(level)
+    compact_at = cfg.compact_reminder_pct
+
+    if pct >= compact_at:
+        recommendation = "Run /compact now to free context space."
+    elif pct >= compact_at - 15:
+        recommendation = f"Approaching compact threshold ({compact_at}%). Consider /compact soon."
+    else:
+        recommendation = "Context is healthy."
+
+    return {
+        "estimated_tokens_used": used,
+        "context_limit": context_limit,
+        "usage_pct": pct,
+        "compact_threshold_pct": compact_at,
+        "recommendation": recommendation,
+    }
+
+
+# --- Stats ---
 
 def get_stats() -> dict:
     conn = _connect()
@@ -154,6 +271,8 @@ def get_stats() -> dict:
     file_count = conn.execute("SELECT COUNT(DISTINCT path) FROM file_reads").fetchone()[0]
     total_reads = conn.execute("SELECT COUNT(*) FROM file_reads").fetchone()[0]
     total_file_tokens = conn.execute("SELECT COALESCE(SUM(estimated_tokens), 0) FROM file_reads").fetchone()[0]
+    total_tool_tokens = conn.execute("SELECT COALESCE(SUM(estimated_tokens), 0) FROM tool_usage").fetchone()[0]
+    tool_calls = conn.execute("SELECT COUNT(*) FROM tool_usage").fetchone()[0]
     conn.close()
 
     stats = dict(stat_rows)
@@ -173,8 +292,11 @@ def get_stats() -> dict:
         },
         "files_read": file_count,
         "total_reads": total_reads,
+        "total_tool_calls": tool_calls,
         "redundant_reads_blocked": stats.get("redundant_blocked", 0),
         "estimated_file_tokens": total_file_tokens,
+        "estimated_tool_tokens": total_tool_tokens,
+        "estimated_total_tokens": total_file_tokens + total_tool_tokens,
         "estimated_tokens_saved": stats.get("tokens_saved", 0),
     }
 
@@ -184,5 +306,34 @@ def get_savings() -> dict:
     return {
         "tokens_saved_file_dedup": stats["estimated_tokens_saved"],
         "reads_blocked": stats["redundant_reads_blocked"],
+        "estimated_total_tracked": stats["estimated_total_tokens"],
         "session_minutes": stats["session_minutes"],
+    }
+
+
+def get_file_report(path: str) -> dict:
+    """Get read history for a specific file."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT offset_val, limit_val, line_count, estimated_tokens, timestamp FROM file_reads WHERE path = ?",
+        (path,),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"path": path, "reads": 0, "message": "File not read this session."}
+
+    reads = []
+    for r in rows:
+        reads.append({
+            "offset": r[0], "limit": r[1], "lines": r[2],
+            "tokens": r[3], "ago_seconds": round(time.time() - r[4]),
+        })
+
+    total_tokens = sum(r[3] for r in rows)
+    return {
+        "path": path,
+        "reads": len(rows),
+        "total_tokens": total_tokens,
+        "history": reads,
     }

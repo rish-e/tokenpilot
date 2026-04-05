@@ -1,15 +1,17 @@
 """TokenPilot MCP Server — Token optimization for Claude Code.
 
-Exposes tools for aggressiveness control, stats, and savings reporting.
-Internal functions are called by Claude Code hooks via CLI.
+Exposes tools for aggressiveness control, stats, savings, context health,
+tool reports, and classifier debugging.
+v2: Added tool tracking, context health, tool registry, classifier debug.
 """
 
 import json
 import sys
 from fastmcp import FastMCP
 
-from config import get_level_config, DEFAULT_LEVEL
-from classifier import classify_task
+from config import get_level_config, adaptive_thinking_cap, DEFAULT_LEVEL
+from classifier import classify_task, classify_debug
+from tool_registry import get_alternative
 import db
 
 mcp = FastMCP(
@@ -17,7 +19,9 @@ mcp = FastMCP(
     instructions=(
         "TokenPilot optimizes token usage in Claude Code sessions. "
         "Use set_level to adjust aggressiveness (1=minimal, 10=maximum). "
-        "Use get_stats for session metrics. Use get_savings for a savings report."
+        "Use get_stats for session metrics. Use get_savings for a savings report. "
+        "Use get_context_health to check context window status. "
+        "Use get_tool_report to see which tools cost the most tokens."
     ),
 )
 
@@ -39,7 +43,7 @@ def set_level(level: int) -> str:
         "level": level,
         "effort_suggest": cfg.effort_suggest,
         "file_dedup": cfg.file_dedup,
-        "thinking_cap": cfg.thinking_cap or "unlimited",
+        "thinking_cap_base": cfg.thinking_cap_base or "unlimited",
         "compact_reminder_at": f"{cfg.compact_reminder_pct}%",
         "shell_truncate": f"{cfg.shell_truncate_lines} lines" if cfg.shell_truncate_lines else "off",
     })
@@ -49,19 +53,54 @@ def set_level(level: int) -> str:
 def get_stats() -> str:
     """Get current session token usage statistics.
 
-    Shows: prompts processed, task categories, files read, redundant reads blocked,
-    estimated tokens consumed and saved.
+    Shows: prompts processed, task categories, files read, tool calls,
+    redundant reads blocked, estimated tokens consumed and saved.
     """
     return json.dumps(db.get_stats(), indent=2)
 
 
 @mcp.tool()
 def get_savings() -> str:
-    """Get a summary of token savings this session.
-
-    Shows: tokens saved from file dedup, reads blocked, and optimization tips.
-    """
+    """Get a summary of token savings this session."""
     return json.dumps(db.get_savings(), indent=2)
+
+
+@mcp.tool()
+def get_context_health() -> str:
+    """Check context window health — estimated usage %, recommendation for /compact."""
+    return json.dumps(db.get_context_health(), indent=2)
+
+
+@mcp.tool()
+def get_tool_report() -> str:
+    """Show which tools consumed the most tokens this session.
+
+    Lists top 10 tools by total token cost with call counts and averages.
+    """
+    return json.dumps(db.get_tool_usage_report(), indent=2)
+
+
+@mcp.tool()
+def get_file_report(path: str) -> str:
+    """Show read history for a specific file — how many times read, tokens consumed."""
+    return json.dumps(db.get_file_report(path), indent=2)
+
+
+@mcp.tool()
+def explain_classification(prompt: str) -> str:
+    """Debug the classifier — show which patterns matched and why a prompt was classified."""
+    return json.dumps(classify_debug(prompt), indent=2)
+
+
+@mcp.tool()
+def reset_file_tracking() -> str:
+    """Clear file read dedup tracking without resetting the full session."""
+    conn = db._connect()
+    conn.execute("DELETE FROM file_reads")
+    conn.execute("UPDATE stats SET value = 0 WHERE key = 'redundant_blocked'")
+    conn.commit()
+    conn.close()
+    return json.dumps({"status": "File tracking reset. Dedup cache cleared."})
 
 
 # --- CLI interface for hooks ---
@@ -86,9 +125,17 @@ def cli():
         elif cfg.effort_suggest in ("all", "strong", "enforce"):
             should_suggest = True
 
+        # Adaptive thinking cap
+        cap = adaptive_thinking_cap(level, result["category"], result["confidence"])
+
         result["suggest"] = should_suggest
         result["level"] = level
+        result["thinking_cap"] = cap
         print(json.dumps(result))
+
+    elif cmd == "classify_debug":
+        prompt = sys.argv[2] if len(sys.argv) > 2 else ""
+        print(json.dumps(classify_debug(prompt), indent=2))
 
     elif cmd == "check_file":
         path = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -104,6 +151,11 @@ def cli():
             elif cfg.file_dedup == "warn_range":
                 result["action"] = "warn"
 
+        # Check tool registry for cheaper alternative
+        alt = get_alternative("Read")
+        if alt and level >= 5:
+            result["alternative"] = alt
+
         print(json.dumps(result))
 
     elif cmd == "record_read":
@@ -113,6 +165,15 @@ def cli():
         lines = int(sys.argv[5]) if len(sys.argv) > 5 else 0
         db.record_read(path, offset, limit, lines)
         print(json.dumps({"status": "recorded"}))
+
+    elif cmd == "record_tool":
+        tool_name = sys.argv[2] if len(sys.argv) > 2 else ""
+        output_chars = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+        db.record_tool_use(tool_name, output_chars)
+        print(json.dumps({"status": "recorded"}))
+
+    elif cmd == "context_health":
+        print(json.dumps(db.get_context_health(), indent=2))
 
     elif cmd == "init":
         level = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_LEVEL
