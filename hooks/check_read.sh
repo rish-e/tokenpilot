@@ -4,6 +4,11 @@
 set -e
 
 TOKENPILOT_DIR="$(dirname "$(dirname "$0")")"
+
+# Check if TokenPilot is enabled
+ENABLED=$(cd "$TOKENPILOT_DIR" && python3 -c "import db; print(db.is_enabled())" 2>/dev/null || echo "True")
+[ "$ENABLED" = "False" ] && exit 0
+
 INPUT=$(cat)
 
 # Extract tool name

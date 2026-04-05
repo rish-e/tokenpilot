@@ -33,11 +33,19 @@ Parse the argument: `$ARGUMENTS`
 - **`reset`** — Clear file dedup tracking without resetting the session.
   - Call the `reset_file_tracking` MCP tool from the `tokenpilot` server.
 
+- **`on`** — Enable TokenPilot (all hooks active).
+  - Call the `toggle` MCP tool from the `tokenpilot` server with `enabled=true`.
+
+- **`off`** — Disable TokenPilot (all hooks bypass, zero overhead).
+  - Call the `toggle` MCP tool from the `tokenpilot` server with `enabled=false`.
+
 - **`status`** — Quick overview of current config.
   - Call `get_stats` and format just: level, session time, total prompts, total tracked tokens.
 
 - No argument or **`help`** — Show available commands:
   ```
+  /tp on               Enable TokenPilot
+  /tp off              Disable TokenPilot
   /tp level <1-10>     Set aggressiveness
   /tp stats            Session metrics
   /tp savings          Token savings report

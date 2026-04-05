@@ -93,6 +93,14 @@ def explain_classification(prompt: str) -> str:
 
 
 @mcp.tool()
+def toggle(enabled: bool) -> str:
+    """Turn TokenPilot on or off. When off, all hooks are bypassed (zero overhead)."""
+    db.set_enabled(enabled)
+    state = "ON" if enabled else "OFF"
+    return json.dumps({"status": state, "message": f"TokenPilot is now {state}."})
+
+
+@mcp.tool()
 def reset_file_tracking() -> str:
     """Clear file read dedup tracking without resetting the full session."""
     conn = db._connect()

@@ -77,10 +77,25 @@ def init_session(level: int = 4):
     conn.execute("DELETE FROM session")
     conn.execute("DELETE FROM stats")
     conn.execute("INSERT OR REPLACE INTO session VALUES ('level', ?)", (str(level),))
+    conn.execute("INSERT OR REPLACE INTO session VALUES ('enabled', '1')")
     conn.execute("INSERT OR REPLACE INTO session VALUES ('start_time', ?)", (str(time.time()),))
     for key in ("total_prompts", "trivial", "research", "standard", "complex",
                 "redundant_blocked", "tokens_saved"):
         conn.execute("INSERT OR REPLACE INTO stats VALUES (?, 0)", (key,))
+    conn.commit()
+    conn.close()
+
+
+def is_enabled() -> bool:
+    conn = _connect()
+    row = conn.execute("SELECT value FROM session WHERE key='enabled'").fetchone()
+    conn.close()
+    return row[0] != "0" if row else True
+
+
+def set_enabled(enabled: bool):
+    conn = _connect()
+    conn.execute("INSERT OR REPLACE INTO session VALUES ('enabled', ?)", ("1" if enabled else "0",))
     conn.commit()
     conn.close()
 
