@@ -4,3 +4,6 @@ __pycache__/
 *.db
 .env
 .DS_Store
+tpcontext.md
+.tokenpilot/
+.debuggai/

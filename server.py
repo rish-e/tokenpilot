@@ -102,29 +102,10 @@ def toggle(enabled: bool) -> str:
 
 
 @mcp.tool()
-def save_brain() -> str:
-    """Save the Project Brain — captures session context (modified files, commits, notes)
-    to .tokenpilot/context.md in the project directory. This persists across sessions
-    so Claude knows where you left off when starting a new chat."""
-    return json.dumps(brain.save_brain(), indent=2)
-
-
-@mcp.tool()
-def view_brain() -> str:
-    """View the current Project Brain content for this project."""
-    content = brain.load_brain()
-    if content:
-        return content
-    return json.dumps({"message": "No Project Brain exists yet. Use save_brain() or /tp save to create one."})
-
-
-@mcp.tool()
 def add_note(note: str) -> str:
-    """Add a note to the Project Brain. Notes persist in the brain file
-    and help Claude understand context in future sessions.
+    """Add a note to the Project Brain (tpcontext.md). Notes persist across sessions.
     Example: 'Don't touch legacy /v1 routes — deprecation planned for Q3'"""
-    db.record_project_note(note)
-    return json.dumps({"status": "Note saved.", "note": note})
+    return json.dumps(brain.add_note(note), indent=2)
 
 
 @mcp.tool()

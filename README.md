@@ -175,38 +175,21 @@ TokenPilot runs automatically after installation. You'll see `[TokenPilot]` mess
 
 ### Slash Commands
 
+5 commands. That's it.
+
 | Command | What it does |
 |---------|-------------|
-| `/tp on` / `/tp off` | Enable/disable TokenPilot |
-| `/tp level 7` | Set aggressiveness to 7/10 |
-| `/tp stats` | Session metrics (prompts, files, tools, tokens) |
-| `/tp savings` | Token savings report |
-| `/tp context` | Context window health check |
-| `/tp tools` | Most expensive tools ranked |
-| `/tp explain <prompt>` | Debug why a prompt was classified a certain way |
-| `/tp file <path>` | Read history for a specific file |
-| `/tp save` | Save Project Brain (session snapshot) |
-| `/tp brain` | View current Project Brain |
-| `/tp note <text>` | Add a note to the brain for future sessions |
-| `/tp reset` | Clear file dedup cache |
-| `/tp status` | Quick overview |
+| `/tp <1-10>` | Set aggressiveness level |
+| `/tp on` / `off` | Enable/disable TokenPilot |
+| `/tp stats` | Full session dashboard |
+| `/tp note <text>` | Add a note to the Project Brain |
+| `/tp explain <prompt>` | Debug why a prompt was classified |
 
 ### MCP Tools
 
-All `/tp` commands map to MCP tools you can also call directly:
+For power users, all tools are callable directly:
 
-- `set_level(N)` — aggressiveness 1-10
-- `toggle(enabled)` — on/off switch
-- `get_stats()` — full session metrics
-- `get_savings()` — savings report
-- `get_context_health()` — context window status
-- `get_tool_report()` — tool cost ranking
-- `get_file_report(path)` — file read history
-- `explain_classification(prompt)` — classifier debug
-- `save_brain()` — save project context
-- `view_brain()` — read project context
-- `add_note(text)` — add note to brain
-- `reset_file_tracking()` — clear dedup
+`set_level` `toggle` `get_stats` `get_savings` `get_context_health` `get_tool_report` `get_file_report` `explain_classification` `add_note` `reset_file_tracking`
 
 ### CLI (for testing)
 
@@ -222,22 +205,26 @@ python3 server.py context_health            # Context window status
 
 ## Project Brain
 
-TokenPilot auto-maintains a `.tokenpilot/context.md` file in each project directory. This acts as persistent memory across Claude Code sessions — when you start a new chat, Claude immediately knows where you left off.
+TokenPilot auto-maintains a `tpcontext.md` file in each project root. This is persistent memory across Claude Code sessions — when you start a new chat, Claude immediately knows where you left off.
+
+**Fully automatic:**
+- **First install** — bootstraps from git history (commits, active files, branch)
+- **Every session start** — auto-saves previous session, loads brain into context
+- **No manual save needed** — it just works
 
 **What it captures:**
 - Files modified (from git diff)
 - Recent commits
 - User notes (via `/tp note "..."`)
 - Session stats (duration, prompt count)
-- Most-read files
+- Most active files
 
-**How to use:**
-- `/tp save` — snapshot current session to the brain
-- `/tp brain` — view what's stored
-- `/tp note "switched to GraphQL"` — add context for future sessions
-- On session start, the brain is automatically loaded if it exists
+**Add context for future sessions:**
+```
+/tp note "switched to GraphQL — don't touch REST endpoints"
+```
 
-The brain stays under 2K tokens to avoid bloating context. Older sessions are rotated out (keeps last 5).
+Stays under 2K tokens. Keeps last 5 sessions, older ones rotate out.
 
 ## Smart Warnings
 
@@ -257,7 +244,7 @@ tokenpilot/
 ├── classifier.py        # Task classifier (v2: negation, adjacency, debug)
 ├── config.py            # Aggressiveness scale + adaptive thinking caps
 ├── db.py                # SQLite persistence (WAL, indexed, serializable)
-├── brain.py             # Project Brain — auto-generated context.md
+├── brain.py             # Project Brain — auto-generated tpcontext.md
 ├── tool_registry.py     # Tool cost estimates + cheaper alternatives
 ├── tracker.py           # In-memory tracker (used by MCP server process)
 ├── requirements.txt
