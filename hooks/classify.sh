@@ -1,6 +1,6 @@
 #!/bin/bash
-# TokenPilot: UserPromptSubmit hook — classifies the prompt and suggests effort level.
-# Reads the hook input from stdin, extracts the prompt, runs classifier.
+# TokenPilot: UserPromptSubmit hook — classifies prompt, detects rapid-fire,
+# warns on peak hours, and suggests /compact when session is long.
 
 set -e
 
@@ -19,14 +19,65 @@ if [ -z "$PROMPT" ]; then
     exit 0
 fi
 
-# Run classifier
-RESULT=$(cd "$TOKENPILOT_DIR" && python3 server.py classify "$PROMPT" 2>/dev/null || echo '{}')
+# Run all checks in one Python call for speed
+cd "$TOKENPILOT_DIR" && python3 -c "
+import sys, json, time, db
+from classifier import classify_task
+from config import get_level_config
 
-SUGGEST=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('suggest',False))" 2>/dev/null || echo "False")
-CATEGORY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('category','standard'))" 2>/dev/null || echo "standard")
-EFFORT=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('effort','medium'))" 2>/dev/null || echo "medium")
-MODEL=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('model_hint','sonnet'))" 2>/dev/null || echo "sonnet")
+prompt = '''$PROMPT'''
+result = classify_task(prompt)
+db.record_classification(result['category'])
+level = db.get_level()
+cfg = get_level_config(level)
 
-if [ "$SUGGEST" = "True" ]; then
-    echo "[TokenPilot] Task: $CATEGORY | Suggested effort: $EFFORT | Model hint: $MODEL"
-fi
+messages = []
+
+# 1. Effort suggestion
+should_suggest = False
+if cfg.effort_suggest == 'trivial_only' and result['category'] == 'trivial':
+    should_suggest = True
+elif cfg.effort_suggest in ('all', 'strong', 'enforce'):
+    should_suggest = True
+
+if should_suggest:
+    messages.append(f'Task: {result[\"category\"]} | Suggested effort: {result[\"effort\"]} | Model hint: {result[\"model_hint\"]}')
+
+# 2. Rapid-fire detection (3+ short prompts in a row)
+prompt_len = len(prompt.strip())
+if prompt_len < 40:
+    db.record_prompt_timestamp()
+    count = db.get_rapid_fire_count()
+    if count >= 3:
+        messages.append('Multiple short prompts detected. Consider batching questions into one message to save tokens.')
+        db.reset_rapid_fire()
+else:
+    db.reset_rapid_fire()
+
+# 3. Session age warning (every 15 prompts)
+total = db.get_prompt_count()
+if total > 0 and total % 15 == 0:
+    messages.append(f'{total} prompts this session. Consider /compact or starting a new session to reduce context cost.')
+
+# 4. Peak hours warning (5-11am PT weekdays = 12:00-18:00 UTC)
+import datetime
+now_utc = datetime.datetime.now(datetime.timezone.utc)
+weekday = now_utc.weekday()  # 0=Mon, 6=Sun
+hour_utc = now_utc.hour
+if weekday < 5 and 12 <= hour_utc < 18:
+    # Only warn once per session
+    from db import _connect
+    conn = _connect()
+    warned = conn.execute(\"SELECT value FROM session WHERE key='peak_warned'\").fetchone()
+    conn.close()
+    if not warned:
+        messages.append('Peak hours active (limits burn faster). Consider deferring heavy work to off-peak.')
+        conn = _connect()
+        conn.execute(\"INSERT OR REPLACE INTO session VALUES ('peak_warned', '1')\")
+        conn.commit()
+        conn.close()
+
+# Output all messages
+for m in messages:
+    print(f'[TokenPilot] {m}')
+" 2>/dev/null || true

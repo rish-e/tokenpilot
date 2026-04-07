@@ -6,7 +6,6 @@ Parse the argument: `$ARGUMENTS`
 
 - **`level <1-10>`** — Set aggressiveness level.
   - Call the `set_level` MCP tool from the `tokenpilot` server with the given number.
-  - Display the result as a clean summary.
 
 - **`stats`** — Show session token usage statistics.
   - Call the `get_stats` MCP tool from the `tokenpilot` server.
@@ -17,7 +16,6 @@ Parse the argument: `$ARGUMENTS`
 
 - **`context`** — Show context window health.
   - Call the `get_context_health` MCP tool from the `tokenpilot` server.
-  - Show usage %, recommendation, and whether /compact is needed.
 
 - **`tools`** — Show which tools cost the most tokens.
   - Call the `get_tool_report` MCP tool from the `tokenpilot` server.
@@ -25,10 +23,19 @@ Parse the argument: `$ARGUMENTS`
 
 - **`explain <prompt>`** — Debug the classifier on a specific prompt.
   - Call the `explain_classification` MCP tool from the `tokenpilot` server with the prompt text after "explain".
-  - Show: category, confidence, matched patterns, negated patterns, adjacency score.
 
 - **`file <path>`** — Show read history for a specific file.
   - Call the `get_file_report` MCP tool from the `tokenpilot` server with the file path.
+
+- **`save`** — Save the Project Brain (snapshot session context to .tokenpilot/context.md).
+  - Call the `save_brain` MCP tool from the `tokenpilot` server.
+
+- **`brain`** — View the current Project Brain content.
+  - Call the `view_brain` MCP tool from the `tokenpilot` server.
+
+- **`note <text>`** — Add a note to the Project Brain for future sessions.
+  - Call the `add_note` MCP tool from the `tokenpilot` server with the text after "note".
+  - Example: `/tp note Don't touch legacy /v1 routes — deprecation planned for Q3`
 
 - **`reset`** — Clear file dedup tracking without resetting the session.
   - Call the `reset_file_tracking` MCP tool from the `tokenpilot` server.
@@ -53,6 +60,9 @@ Parse the argument: `$ARGUMENTS`
   /tp tools            Most expensive tools
   /tp explain <prompt> Debug classifier
   /tp file <path>      File read history
+  /tp save             Save Project Brain
+  /tp brain            View Project Brain
+  /tp note <text>      Add note to brain
   /tp reset            Clear file dedup cache
   /tp status           Quick overview
   ```

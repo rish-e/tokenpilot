@@ -196,6 +196,73 @@ def record_classification(category: str):
     conn.close()
 
 
+def record_prompt_timestamp():
+    """Record when a prompt was submitted for rapid-fire detection."""
+    conn = _connect()
+    conn.execute("INSERT OR REPLACE INTO session VALUES ('last_prompt_time', ?)", (str(time.time()),))
+    # Track consecutive short prompts
+    prev = conn.execute("SELECT value FROM session WHERE key='rapid_fire_count'").fetchone()
+    count = int(prev[0]) if prev else 0
+    conn.execute("INSERT OR REPLACE INTO session VALUES ('rapid_fire_count', ?)", (str(count + 1),))
+    conn.commit()
+    conn.close()
+
+
+def reset_rapid_fire():
+    conn = _connect()
+    conn.execute("INSERT OR REPLACE INTO session VALUES ('rapid_fire_count', '0')")
+    conn.commit()
+    conn.close()
+
+
+def get_rapid_fire_count() -> int:
+    conn = _connect()
+    row = conn.execute("SELECT value FROM session WHERE key='rapid_fire_count'").fetchone()
+    conn.close()
+    return int(row[0]) if row else 0
+
+
+def get_prompt_count() -> int:
+    conn = _connect()
+    row = conn.execute("SELECT value FROM stats WHERE key='total_prompts'").fetchone()
+    conn.close()
+    return int(row[0]) if row else 0
+
+
+def get_session_start_time() -> float:
+    conn = _connect()
+    row = conn.execute("SELECT value FROM session WHERE key='start_time'").fetchone()
+    conn.close()
+    return float(row[0]) if row else time.time()
+
+
+# --- Project Brain ---
+
+def record_project_note(note: str):
+    """Store a user note for the project brain."""
+    conn = _connect()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS brain_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note TEXT NOT NULL,
+            timestamp REAL
+        )
+    """)
+    conn.execute("INSERT INTO brain_notes (note, timestamp) VALUES (?, ?)", (note, time.time()))
+    conn.commit()
+    conn.close()
+
+
+def get_brain_notes() -> list[str]:
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT note FROM brain_notes ORDER BY timestamp").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+    return [r[0] for r in rows]
+
+
 # --- Tool usage tracking (Phase 2) ---
 
 def record_tool_use(tool_name: str, output_chars: int = 0):

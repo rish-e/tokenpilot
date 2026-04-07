@@ -177,6 +177,7 @@ TokenPilot runs automatically after installation. You'll see `[TokenPilot]` mess
 
 | Command | What it does |
 |---------|-------------|
+| `/tp on` / `/tp off` | Enable/disable TokenPilot |
 | `/tp level 7` | Set aggressiveness to 7/10 |
 | `/tp stats` | Session metrics (prompts, files, tools, tokens) |
 | `/tp savings` | Token savings report |
@@ -184,21 +185,27 @@ TokenPilot runs automatically after installation. You'll see `[TokenPilot]` mess
 | `/tp tools` | Most expensive tools ranked |
 | `/tp explain <prompt>` | Debug why a prompt was classified a certain way |
 | `/tp file <path>` | Read history for a specific file |
+| `/tp save` | Save Project Brain (session snapshot) |
+| `/tp brain` | View current Project Brain |
+| `/tp note <text>` | Add a note to the brain for future sessions |
 | `/tp reset` | Clear file dedup cache |
 | `/tp status` | Quick overview |
-| `/tp help` | List all commands |
 
 ### MCP Tools
 
 All `/tp` commands map to MCP tools you can also call directly:
 
 - `set_level(N)` — aggressiveness 1-10
+- `toggle(enabled)` — on/off switch
 - `get_stats()` — full session metrics
 - `get_savings()` — savings report
 - `get_context_health()` — context window status
 - `get_tool_report()` — tool cost ranking
 - `get_file_report(path)` — file read history
 - `explain_classification(prompt)` — classifier debug
+- `save_brain()` — save project context
+- `view_brain()` — read project context
+- `add_note(text)` — add note to brain
 - `reset_file_tracking()` — clear dedup
 
 ### CLI (for testing)
@@ -213,6 +220,35 @@ python3 server.py check_file "/src/app.py"  # Check file dedup
 python3 server.py context_health            # Context window status
 ```
 
+## Project Brain
+
+TokenPilot auto-maintains a `.tokenpilot/context.md` file in each project directory. This acts as persistent memory across Claude Code sessions — when you start a new chat, Claude immediately knows where you left off.
+
+**What it captures:**
+- Files modified (from git diff)
+- Recent commits
+- User notes (via `/tp note "..."`)
+- Session stats (duration, prompt count)
+- Most-read files
+
+**How to use:**
+- `/tp save` — snapshot current session to the brain
+- `/tp brain` — view what's stored
+- `/tp note "switched to GraphQL"` — add context for future sessions
+- On session start, the brain is automatically loaded if it exists
+
+The brain stays under 2K tokens to avoid bloating context. Older sessions are rotated out (keeps last 5).
+
+## Smart Warnings
+
+TokenPilot automatically detects and warns about token-wasting patterns:
+
+- **Rapid-fire prompts** — 3+ short messages in a row triggers a "batch your questions" suggestion
+- **Session age** — every 15 prompts, suggests `/compact` or starting fresh
+- **Peak hours** — warns once per session during 5-11am PT weekdays (Anthropic burns limits faster during peak)
+
+All warnings appear as `[TokenPilot]` messages and respect the on/off toggle.
+
 ## File Structure
 
 ```
@@ -221,16 +257,17 @@ tokenpilot/
 ├── classifier.py        # Task classifier (v2: negation, adjacency, debug)
 ├── config.py            # Aggressiveness scale + adaptive thinking caps
 ├── db.py                # SQLite persistence (WAL, indexed, serializable)
+├── brain.py             # Project Brain — auto-generated context.md
 ├── tool_registry.py     # Tool cost estimates + cheaper alternatives
 ├── tracker.py           # In-memory tracker (used by MCP server process)
 ├── requirements.txt
 ├── commands/
 │   └── tp.md            # /tp slash command (copy to ~/.claude/commands/)
 ├── hooks/
-│   ├── session_start.sh # SessionStart hook
-│   ├── classify.sh      # UserPromptSubmit hook
-│   ├── check_read.sh    # PreToolUse (Read) hook
-│   └── post_tool.sh     # PostToolUse (all tools) hook
+│   ├── session_start.sh # SessionStart — init + load brain
+│   ├── classify.sh      # UserPromptSubmit — classify + rapid-fire + peak hours + session age
+│   ├── check_read.sh    # PreToolUse (Read) — dedup + tool routing
+│   └── post_tool.sh     # PostToolUse — real token tracking
 └── templates/
     └── claudeignore-default
 ```
@@ -243,6 +280,8 @@ tokenpilot/
 | TokenPilot file dedup | Skip redundant file reads | ~2K tokens per blocked read |
 | TokenPilot tool routing | Suggest cheaper tool alternatives | 60-90% per substitution |
 | TokenPilot PostToolUse | Track actual token costs (visibility) | Measurement enables optimization |
+| TokenPilot smart warnings | Batch prompts, session age, peak hours | Prevents context blowup |
+| TokenPilot Project Brain | Resume sessions without re-explaining context | 3-5 messages saved per session start |
 | RTK | Compress shell output | 60-90% on Bash results |
 | MCP Compressor | Compress MCP tool schemas | 70-97% per wrapped server |
 | .claudeignore | Exclude build artifacts from search | 30-40% on exploration |
